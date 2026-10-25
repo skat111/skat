@@ -1,0 +1,9 @@
+#!/sbin/openrc-run
+name="skat"
+description="Skat voice client"
+supervisor="supervise-daemon"
+command="/usr/bin/python3"
+command_args="-u /opt/skat/skat-client.py"
+output_log="/tmp/skat.log"
+error_log="/tmp/skat.log"
+depend() { need net; after alsa chronyd; }

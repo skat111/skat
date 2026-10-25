@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Тест синхронизации звука</title>
+<style>
+body{margin:0;background:#111;color:#eee;font:18px system-ui,sans-serif;text-align:center}
+#flash{width:60vmin;height:60vmin;margin:4vh auto 2vh;border-radius:12px;background:#222}
+button,input{font:inherit}
+button{padding:.6em 1.2em;margin:.3em;background:#333;color:#eee;border:1px solid #666;border-radius:8px;cursor:pointer}
+#val{font-size:48px;font-weight:600}
+small{color:#aaa;display:block;max-width:640px;margin:1em auto;line-height:1.5}
+</style></head><body>
+<div id="flash"></div>
+<div>Звук идёт раньше вспышки на</div>
+<div id="val">0 мс</div>
+<input id="r" type="range" min="0" max="3000" step="10" value="0" style="width:min(640px,90vw)"><br>
+<button id="go">Старт / стоп</button>
+<button onclick="step(-100)">-100</button><button onclick="step(-10)">-10</button>
+<button onclick="step(10)">+10</button><button onclick="step(100)">+100</button>
+<small>Включи на колонке «звук с компьютера», нажми «Старт». Раз в секунду вспыхивает квадрат и звучит щелчок.
+Двигай ползунок, пока вспышка и звук из колонки не совпадут. Число на экране — задержка звука на колонке в миллисекундах.
+Стрелки влево и вправо тоже двигают на 10 мс.</small>
+<script>
+var ctx=null,run=false,timer=null,lead=0,r=document.getElementById("r"),v=document.getElementById("val"),f=document.getElementById("flash");
+function show(){v.textContent=lead+" мс"}
+function step(d){lead=Math.max(0,Math.min(3000,lead+d));r.value=lead;show()}
+r.oninput=function(){lead=+r.value;show()};
+document.onkeydown=function(e){if(e.key==="ArrowRight")step(10);if(e.key==="ArrowLeft")step(-10)};
+function beep(at){var o=ctx.createOscillator(),g=ctx.createGain();o.frequency.value=1500;g.gain.setValueAtTime(0,at);g.gain.linearRampToValueAtTime(0.9,at+0.003);g.gain.linearRampToValueAtTime(0,at+0.06);o.connect(g);g.connect(ctx.destination);o.start(at);o.stop(at+0.08)}
+function tick(){
+  var now=ctx.currentTime, flashAt=Math.ceil((now+0.5)*1)/1;      // вспышка на целой секунде часов звукового контекста
+  var soundAt=flashAt-lead/1000; if(soundAt<now+0.05){soundAt=now+0.05}
+  beep(soundAt);
+  var ms=(flashAt-ctx.currentTime)*1000;
+  setTimeout(function(){f.style.background="#fff";setTimeout(function(){f.style.background="#222"},80)},Math.max(0,ms-ctx.outputLatency*0));
+}
+document.getElementById("go").onclick=function(){
+  if(run){run=false;clearInterval(timer);return}
+  ctx=ctx||new (window.AudioContext||window.webkitAudioContext)();ctx.resume();run=true;tick();timer=setInterval(tick,1000);
+};
+</script></body></html>

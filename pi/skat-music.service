@@ -1,0 +1,13 @@
+[Unit]
+Description=Skat music (Yandex Music proxy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/skat-music.env
+ExecStart=/opt/skat-music/venv/bin/python /opt/skat-music/musicd.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

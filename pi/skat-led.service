@@ -1,0 +1,16 @@
+[Unit]
+Description=Skat LED strips (ZENGGE BLE + Skydimo USB)
+After=bluetooth.service network-online.target
+Wants=bluetooth.service
+
+[Service]
+EnvironmentFile=/etc/skat-music.env
+ExecStart=/opt/skat-music/venv/bin/python -u /opt/skat-music/ledd.py
+# если зависшее Bluetooth-соединение мешает найти ленту: сбросить адаптер (индекс смотрите в `btmgmt info`)
+#ExecStopPost=-/usr/bin/btmgmt --index 1 power off
+#ExecStopPost=-/usr/bin/btmgmt --index 1 power on
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

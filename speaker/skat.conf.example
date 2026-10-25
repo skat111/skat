@@ -1,0 +1,18 @@
+# Положите как /etc/skat.conf на колонке. Строки вида ИМЯ=значение, # — комментарий.
+URL=https://IP_СЕРВЕРА:8765
+# тот же SKAT_TOKEN, что в /etc/skat.env на сервере
+TOKEN=
+# сертификат сервера (скопируйте /opt/skat/cert.pem с сервера)
+CERT=/opt/skat/cert.pem
+DEVICE=kolonka
+
+# чувствительность слова «Скат» (ниже — чаще откликается; при ложных срабатываниях поднимайте)
+WAKE_THR=0.93
+THRESH=600
+MIC_GAIN=75
+
+# необязательно: музыка (Raspberry Pi с musicd.py), лента, управление ПК
+#MUSIC_URL=http://IP_PI:8780
+#MUSIC_TOKEN=
+#PC_URL=http://IP_ПК:8790
+#PC_TOKEN=
