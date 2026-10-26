@@ -1,5 +1,5 @@
 [Unit]
-Description=Skat LED strips (ZENGGE BLE + Skydimo USB)
+Description=Skat LED strips (IllumiHome DMRRBA-007 BLE + Skydimo USB)
 After=bluetooth.service network-online.target
 Wants=bluetooth.service
 

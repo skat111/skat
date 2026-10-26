@@ -19,6 +19,7 @@ _mu = urllib.parse.urlparse(CONF.get("MUSIC_URL", ""))
 LED_URL = urllib.parse.urlparse(f"http://{_mu.hostname}:8781") if _mu.hostname and CONF.get("LED", "1") == "1" else None
 WAKE_THR = float(CONF.get("WAKE_THR", 0.93))  # порог вероятности слова «Скат»
 LIGHT_DELAY = float(CONF.get("LIGHT_DELAY", 0.1))  # задержка запуска звука aplay относительно записи, с; подстройка света
+SPEECH_LIGHT_FRAME = 2400  # 50 мс PCM 24 кГц: плавно, но не быстрее предела кольца ~20 кадров/с
 FRAME = 320  # 20 мс, 16 кГц
 START, END, PRE, MAXF = 4, 20, 15, 500  # кадров: старт речи, тишина до конца (0,4 с), пред-запись (0,3 с), максимум 10 с
 # Все 4 PDM-микрофона 48 кГц усредняем и приводим к 16 кГц нормальным ресемплером sox (дешёвый plug из ALSA
@@ -51,6 +52,13 @@ music_paused = False  # пользователь сам попросил пау�
 def rms(b):
     a = array.array("h", b)
     return (sum(x * x for x in a) / len(a)) ** 0.5
+
+
+def speech_light(previous, energy):
+    """RMS речи -> сглаженный уровень кольца 0..100 и яркость ленты 0..1."""
+    target = max(0.0, min(100.0, energy / 70))
+    level = previous + (target - previous) * (0.70 if target > previous else 0.28)
+    return level, 0.12 + 0.88 * (level / 100) ** 0.75
 
 
 def sound(name, wait=False):
@@ -147,11 +155,13 @@ def send_and_play(pcm, awake, t_end):
     lights, stop_lights, t0, played = queue.Queue(), threading.Event(), None, 0
 
     def light_loop():  # свет по времени ВОСПРОИЗВЕДЕНИЯ, а не записи в aplay (там буфер на секунды)
+        level = 0.0
         while (item := lights.get()) is not None and not stop_lights.is_set():
             time.sleep(max(0, item[0] - time.time()))
             if not stop_lights.is_set():
-                ring.show("speaking", item[1], tint)
-                if tint and not lh: ledc.rgb([x * (0.35 + 0.65 * min(1.0, item[1] / 10)) for x in tint])  # лента светится только на эмоциях
+                level, brightness = speech_light(level, item[1])
+                ring.show("speaking", round(level), tint)
+                if tint and not lh: ledc.rgb([x * brightness for x in tint])  # лента светится только на эмоциях
     threading.Thread(target=light_loop, daemon=True).start()
     done, gap = threading.Event(), {"shown": False}
 
@@ -160,13 +170,20 @@ def send_and_play(pcm, awake, t_end):
             if t0 is not None and not gap["shown"] and time.time() > t0 + played / 48000 + 0.35:
                 gap["shown"] = True; loading_ui()
     threading.Thread(target=gap_watch, daemon=True).start()
+    light_buf, light_scheduled = b"", 0
     try:
         while d := r.read(8192):
-            if gap["shown"]: gap["shown"] = False; clock.face(emo); t0 = time.time() + LIGHT_DELAY; played = 0
+            if gap["shown"]:
+                gap["shown"] = False; clock.face(emo); t0 = time.time() + LIGHT_DELAY; played = 0
+                light_buf, light_scheduled = b"", 0
             if t0 is None:
                 clock.face(emo); t0 = time.time() + LIGHT_DELAY
                 print(f"latency: {time.time()-t_end:.2f}s from end of speech to first audio", flush=True)
-            lights.put((t0 + played / 48000, int(rms(d[:len(d) // 2 * 2]) / 70)))  # 24 кГц * 2 байта
+            light_buf += d[:len(d) // 2 * 2]
+            while len(light_buf) >= SPEECH_LIGHT_FRAME:
+                frame, light_buf = light_buf[:SPEECH_LIGHT_FRAME], light_buf[SPEECH_LIGHT_FRAME:]
+                lights.put((t0 + (light_scheduled + SPEECH_LIGHT_FRAME // 2) / 48000, rms(frame)))
+                light_scheduled += SPEECH_LIGHT_FRAME
             played += len(d)
             p.stdin.write(d)
         p.stdin.close()
