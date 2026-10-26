@@ -89,7 +89,8 @@ class Ring:
             try: fr = json.load(open(f"{LED}/{name}.json"))
             except OSError: fr = fallback_frames(name)  # заводского файла нет: простая своя анимация
             # duration 0 (listening) и 16.6 (volume) — кадр выбирается уровнем, а не временем
-            tc = lambda c: tuple(int(t * max(c) / 255) for t in tint) if tint else c  # яркость кадра сохраняем, цвет — эмоции
+            gain = {"next_track": 2.4, "prev_track": 2.4, "pause_track": 2.0, "start_track": 2.0}.get(name, 1.0)  # заводские кадры переключения тусклые
+            tc = lambda c: tuple(min(255, int(t * min(1.0, max(c) * gain / 255))) for t in tint) if tint else tuple(min(255, int(x * gain)) for x in c)  # яркость кадра сохраняем, цвет — эмоции
             self.cache[(name, tint)] = [(f["duration"] if 0 < f.get("duration", 0) < 1 else 0.0166,
                                          frame([tc(hexrgb(c)) for c in f["colors"]], self.scale)) for f in fr]
         return self.cache[(name, tint)]

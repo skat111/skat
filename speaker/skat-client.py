@@ -39,7 +39,7 @@ deaf_until = 0.0
 ring = ringmod.Ring(float(CONF.get("BRIGHT", 1.0)))
 ring.theme = (122, 60, 255)
 clock = clockmod.Clock(float(CONF.get("CLOCK_BRIGHT", 1.0)))
-wake = wakemod.Wake()
+wake = wakemod.Wake(marusia=CONF.get("WAKEWORD") == "marusia")
 try: live = aecmod.Live(int(CONF.get("AEC_FILTER", 4096)))  # эхоподавление Speex для слова «Скат» поверх музыки
 except OSError as e: live = None; print("AEC off:", e, flush=True)
 viz_q = queue.Queue(maxsize=200)
@@ -92,7 +92,7 @@ def start_listening():
 
 def ui_listen(chime):
     """Колонка слушает команду: кольцо синее, открытые глаза, дальше цвет следит за голосом."""
-    ring.color(BLUE); clock.play("eyesReady_digits", hold=True)
+    ring.color(BLUE); clock.play("eyesReady_digits", hold=True); ledc.rgb([c * 0.5 for c in THEME])  # лента загорается вместе с кольцом
     start_listening()
     if chime: sound(chime, wait=True)
 
@@ -199,6 +199,19 @@ def loading_ui():
 LIVE = {"on": False, "sid": None, "q": queue.Queue(maxsize=600), "mute_until": 0.0, "play_end": 0.0, "stop": threading.Event(), "player": None, "ended": False}
 
 
+VG = {"buf": b"", "g": 0.0, "sp": 1.0}
+
+
+def vg_update(f):
+    """Ворота «это голос»: нейросеть-различитель речи и шума (vad_model.npz) крутит те же признаки, что и детектор слова. 1.0 — речь, 0 — шум."""
+    if wake.vad is None: return 1.0
+    VG["buf"] += f
+    while len(VG["buf"]) >= 2560:
+        wake.feed(np.frombuffer(VG["buf"][:2560], np.int16)); VG["buf"] = VG["buf"][2560:]; VG["sp"] = wake.sp
+    VG["g"] = max(min(1.0, max(0.0, (VG["sp"] - 0.3) / 0.45)), VG["g"] * 0.9)  # атака сразу, спад ~0,4 с
+    return VG["g"]
+
+
 def live_feed(f):
     """Кадр микрофона (16 кГц, 20 мс) -> очередь в OpenAI (24 кГц). Пока Скат говорит, шлём тишину: иначе он услышит себя."""
     x = np.frombuffer(f, np.int16)
@@ -208,8 +221,9 @@ def live_feed(f):
     except queue.Full: pass
     LIVE["n"] = LIVE.get("n", 0) + 1
     if LIVE["n"] % 3 == 0 and time.time() > LIVE["mute_until"]:  # кольцо как индикатор уровня твоего голоса
-        lv = max(0.0, min(1.0, (rms(f) - 250) / 1800)) ** 0.7; col = level_color(lv); dim = tuple(int(c * 0.10) for c in THEME)
+        lv = max(0.0, min(1.0, (rms(f) - 250) / 1800)) ** 0.7 * vg_update(f); col = level_color(lv); dim = tuple(int(c * 0.10) for c in THEME)
         ring.colors([tuple(int(c * a) for c in col) if (a := min(1.0, lv * 7.5 + 0.5 - abs(i - 6))) > 0 else dim for i in range(12)])
+        ledc.rgb([c * (0.3 + 0.7 * lv) for c in col])
 
 
 def live_start():
@@ -483,7 +497,10 @@ def viz_loop():
         else:
             cols = [tuple(int(255 * c) for c in colorsys.hsv_to_rgb((hue + i / 12 * 0.5) % 1.0, 0.95, v)) for i in range(12)]
         ring.colors(cols)
-        ledc.rgb([sum(c[k] for c in cols) / 12 for k in range(3)])  # лента в тон кольца
+        vl = min(1.0, 0.45 + 0.55 * level + 0.4 * kick)  # лентам яркость выше, чем кольцу: они светят в комнату
+        if getattr(music, "kind", "") == "wave":
+            m = 0.5 + 0.5 * math.sin(phase); ledc.rgb([vl * (a + (b - a) * m) for a, b in zip((255, 190, 0), (150, 0, 255))])
+        else: ledc.rgb([255 * c for c in colorsys.hsv_to_rgb(hue % 1.0, 0.95, vl)])  # лента в тон кольца
         drawing = True
 
 
@@ -619,7 +636,7 @@ def do_music(a):
 def on_wake(p, recent):
     """Детектор услышал «Скат»: свет сразу; если человек продолжает говорить, без сигнала, иначе сигнал."""
     global chime_at
-    ring.color(BLUE); clock.play("eyesReady_digits", hold=True)
+    ring.color(BLUE); clock.play("eyesReady_digits", hold=True); ledc.rgb([c * 0.5 for c in THEME])  # лента загорается вместе с кольцом
     if music: threading.Thread(target=music.suspend, daemon=True).start()  # тишина и свободная звуковая карта
     threading.Thread(target=warm_up, daemon=True).start()
     start_listening(); chime_at = time.time() + 0.3
@@ -707,7 +724,7 @@ def phrases():
     ring.play("ready"); clock.play("ready_digits"); sound("02_ready")
     pre, buf, voiced, quiet, floor, n, sm = collections.deque(maxlen=PRE), [], 0, 0, THRESH / 2, 0, 0.0
     vpeak = 450.0
-    recent, wbuf, cool, was_deaf = collections.deque(maxlen=100), b"", 0.0, True
+    recent, wbuf, cool, was_deaf = collections.deque(maxlen=300), b"", 0.0, True
     while True:
         f = rec.stdout.read(FRAME * 2)
         if len(f) < FRAME * 2:
@@ -733,6 +750,8 @@ def phrases():
             wake_ok.clear(); on_wake(1.0, recent); cool = now + 2.0; sm = 0.0
             pre.clear(); pre.extend(list(recent)[-75:]); buf, voiced = [], 0
             continue
+        if not awaiting_until and CONF.get("WAKE", "1") == "0":  # слово отключено (WAKE=0): в покое колонка ничего не слушает, работает только голосовая кнопка
+            wbuf = b""; continue
         if not awaiting_until:  # покой: ловим слово
             if live and music and music.playing and not music.sus and not muted:  # музыка играет: вычитаем её из микрофона
                 f = live.process(np.frombuffer(f, np.int16)).tobytes()
@@ -760,13 +779,15 @@ def phrases():
             if not buf: sound("03_wake_short"); continue
         if now > awaiting_until and not buf:  # не дождались команды
             awaiting_until = 0; chime_at = 0; ui_idle(); continue
+        vg_gate = vg_update(f)  # кольцо реагирует на человеческую речь, а не на любой шум
         sm = e if e > sm else 0.72 * sm + 0.28 * e  # атака мгновенная, спад быстрый: кольцо «бьётся» в такт слогам
         vpeak = max(450.0, vpeak * 0.985, sm)  # шкала подстраивается под голос за ~секунду: обычная речь доходит почти до края
         if now > awaiting_since and n % 2 == 0:  # полосы по кругу: сколько светодиодов горит и какого цвета — зависит от громкости
-            lv = max(0.0, min(1.0, (sm - 1.3 * floor) / max(1.0, vpeak - 1.3 * floor))) ** 0.7  # корень: тихие слоги тоже заметны
+            lv = max(0.0, min(1.0, (sm - 1.3 * floor) / max(1.0, vpeak - 1.3 * floor))) ** 0.7 * vg_gate  # корень: тихие слоги тоже заметны; шум без речи гасим
             col = level_color(lv); dim = tuple(int(c * 0.10) for c in THEME)
             # как заводской «слушаю»: от середины (светодиод 6, спереди) к краям; сколько светодиодов горит — зависит от громкости
             ring.colors([tuple(int(c * a) for c in col) if (a := min(1.0, lv * 7.5 + 0.5 - abs(i - 6))) > 0 else dim for i in range(12)])
+            ledc.rgb([c * (0.3 + 0.7 * lv) for c in col])  # лента (и монитор) слушают вместе с кольцом: цвет и яркость идут за голосом
         loud = e > max(THRESH, 2.2 * floor)
         if not buf:
             pre.append(f); voiced = voiced + 1 if loud else 0
@@ -803,15 +824,34 @@ def volume(step):
     print(f"volume step {vol_idx}/{len(LEVELS_DB)-1} ({LEVELS_DB[vol_idx]} dB)", flush=True)
 
 
-PAD = {"n": 0, "t": None, "last": 0.0}
+PAD = {"n": 0, "t": None, "last": 0.0, "down": 0.0, "long": False, "lt": None, "t148": 0.0}
+
+
+def pad_press():
+    """Кнопка play/pause (148) нажата при музыке: если держат дольше 0,6 с — это «следующий трек»."""
+    PAD["down"] = time.time(); PAD["long"] = False
+    if PAD["lt"]: PAD["lt"].cancel()
+    PAD["lt"] = threading.Timer(0.6, pad_long); PAD["lt"].start()
+
+
+def pad_long():
+    PAD["long"] = True; PAD["n"] = 2  # удержание = следующий трек, срабатывает сразу, не дожидаясь отпускания
+    if PAD["t"]: PAD["t"].cancel()
+    pad_act()
+
+
+def pad_release():
+    if PAD["lt"]: PAD["lt"].cancel()
+    short = PAD["down"] and not PAD["long"]; PAD["down"] = 0
+    if short: pad_tap()  # короткое касание
 
 
 def pad_tap():
-    """Кнопка play/pause (код 148) при музыке: 1 касание — пауза/продолжить, 2 — следующий трек, 3 — предыдущий."""
-    if time.time() - PAD["last"] < 0.25: return  # панель шлёт несколько событий за одно касание
+    """Короткие касания (при музыке): 1 — пауза/продолжить, 2 подряд — следующий трек, 3 — предыдущий; удержание — следующий."""
+    if time.time() - PAD["last"] < 0.12: return
     PAD["last"] = time.time(); PAD["n"] += 1
     if PAD["t"]: PAD["t"].cancel()
-    PAD["t"] = threading.Timer(0.5, pad_act); PAD["t"].start()
+    PAD["t"] = threading.Timer(0.7, pad_act); PAD["t"].start()
 
 
 def pad_act():
@@ -823,8 +863,10 @@ def pad_act():
         if music_paused or music.sus: music_paused = False; music.resume(); ring.play("start_track")
         else: music_paused = True; music.suspend(); ring.play("pause_track")
         clock.time()
-    elif n == 2: music.ctl("next"); ring.play("next_track"); clock.play("nextTrack_digits")
-    else: music.ctl("prev"); ring.play("prev_track"); clock.play("prevTrack_digits")
+    elif n == 2:
+        ring.play("next_track"); clock.play("prevTrack_digits"); threading.Thread(target=music.ctl, args=("next",), daemon=True).start()  # на циферблате слева направо
+    else:
+        ring.play("prev_track"); clock.play("nextTrack_digits"); threading.Thread(target=music.ctl, args=("prev",), daemon=True).start()
 
 
 def keys():
@@ -833,8 +875,12 @@ def keys():
     last_vol_key = 0.0
     with open(INPUT, "rb") as f:
         while True:
-            _, _, typ, code, val = struct.unpack("llHHi", f.read(24))
-            if typ != 1 or val == 0:
+            sec, usec, typ, code, val = struct.unpack("llHHi", f.read(24))
+            if typ != 1: continue
+            if CONF.get("KEYDBG"): print(f"{time.strftime('%H:%M:%S')}.{int(usec / 1000):03d} raw key {code} value {val}", flush=True)  # все события, включая отпускание
+            if code == 148: PAD["t148"] = time.time()
+            if code == 148 and val == 0: pad_release(); continue
+            if val == 0:
                 continue
             print(f"{time.strftime('%H:%M:%S')} key {code} value {val}", flush=True)
             if code in (114, 115): last_vol_key = time.time()
@@ -853,7 +899,8 @@ def keys():
                 except OSError: pass
                 print(f"{time.strftime('%H:%M:%S')} {'muted' if muted else 'unmuted'}", flush=True)
             elif code in (582, 148) and time.time() - last_vol_key < 0.9: continue  # панель задевает голосовую кнопку при смене громкости
-            elif code == 148 and music and music.playing: pad_tap()  # кнопка play/pause: управление треками
+            elif code == 582 and time.time() - PAD["t148"] < 0.2: continue  # касание play/pause иногда даёт заодно 582: это тот же жест
+            elif code == 148 and music and music.playing: pad_press()  # кнопка play/pause: управление треками
             elif code in (582, 148):  # слушать без «Скат», а если говорит — прервать
                 if player and player.poll() is None: stop_playback(); ui_idle()
                 elif awaiting_until: awaiting_until = chime_at = 0; ui_idle()  # колонка слушала — кнопка отменяет

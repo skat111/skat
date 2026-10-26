@@ -126,7 +126,7 @@ def light_quick(text):
 
 PEND = {}  # device -> команда музыке для колонки (отдаётся через /followup)
 # ponytail: STT иногда слышит «Скат» как «скот»/«с кат»; расширять по логам, если промахивается
-WAKE = re.compile(r"^\W*(?:(?:эй|ну|слушай|привет|окей|ок)\W+)?(?:ск[аоэ]т[аы]?|с\s?кат)\b\W*", re.I)
+WAKE = re.compile(r"^\W*(?:(?:эй|ну|слушай|привет|окей|ок)\W+)?(?:ск[аоэ]т[аы]?|с\s?кат|мару[сз]\w{0,2})\b\W*", re.I)
 JUNK = re.compile(r"^\W*(?:ска|кат|ат|ск)\b\W*", re.I)
 pool = ThreadPoolExecutor(4)
 SENT = re.compile(r"(?<=[.!?…])\s+|\n+")
@@ -670,7 +670,7 @@ class H(BaseHTTPRequestHandler):
             try: text = stt(self.rfile.read(n))
             except Exception as e: print("verify error", e, flush=True); return self.reply(502)
             ok = bool(re.search(r"\b(ск[аоэ]т\w{0,2}|скад\w*)\b", text.lower())) or (  # проверка пробуждения принимает и обрывок слова: детектор срабатывает до конца «т»
-                bool(self.headers.get("X-Loose")) and bool(re.search(r"\bск[аоэ]|\bск[ао]д|скат", text.lower())))
+                bool(self.headers.get("X-Loose")) and bool(re.search(r"\bск[аоэ]|\bск[ао]д|скат|\bмару|русь?я", text.lower())))
             print(f"[{self.headers.get('X-Device', '?')}] verify {text!r} ok={ok}", flush=True)
             return self.reply(200, json.dumps({"ok": ok, "text": text}, ensure_ascii=False).encode())
         if self.path == "/say":  # озвучить короткую фразу (колонка говорит от себя, например «не нашёл»)

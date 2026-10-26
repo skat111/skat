@@ -173,6 +173,8 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200); self.send_header("Content-Type", "audio/L16")
         self.send_header("Transfer-Encoding", "chunked"); self.end_headers()
         try:
+            # ffmpeg отдаёт звук быстрее воспроизведения; без этого в буферах сокета копятся секунды, и «дальше» срабатывало с задержкой ~10 с
+            self.connection.setsockopt(__import__("socket").SOL_SOCKET, __import__("socket").SO_SNDBUF, 32768)
             while me == stream_id["n"]:
                 with lock:
                     if skip["n"]: Q["i"] = max(0, Q["i"] + skip["n"] - 1); skip["n"] = 0

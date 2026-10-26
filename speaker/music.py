@@ -39,9 +39,8 @@ class Music:
     def _open(self):
         host, port, hdr = self.src or (self.host, self.port, self.hdr)
         c = http.client.HTTPConnection(host, port, timeout=60)
-        if self.src:  # живой поток: мелкий приёмный буфер, иначе в сокете копятся секунды задержки
-            import socket
-            c.connect(); c.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        import socket
+        c.connect(); c.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096 if self.src else 32768)  # мелкий приёмный буфер: иначе в сокете копятся секунды (переключение трека запаздывает)
         c.request("GET", "/audio" if self.src else "/stream", headers=hdr); return c, c.getresponse()
 
     def _start(self):

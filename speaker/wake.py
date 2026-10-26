@@ -8,7 +8,11 @@ STEP = 1280  # 80 мс
 
 
 class Wake:
-    def __init__(self, d="/opt/skat/ww"):
+    def __init__(self, d="/opt/skat/ww", marusia=False):
+        self.mar, self.p, self.sp, self.vad = None, np.zeros(5), 1.0, None
+        if marusia:  # заводская модель слова «Маруся» из прошивки колонки (marusia_wake.py): наша сеть для «Скат» не нужна
+            from marusia_wake import Marusia
+            self.mar = Marusia(f"{d}/marusia"); return
         so = ort.SessionOptions(); so.intra_op_num_threads = 1; so.inter_op_num_threads = 1
         prov = ["CPUExecutionProvider"]
         self.mel = ort.InferenceSession(f"{d}/melspectrogram.onnx", so, providers=prov)
@@ -18,20 +22,28 @@ class Wake:
         m = np.load(f"{d}/skat_model5.npz" if os.path.exists(f"{d}/skat_model5.npz") else f"{d}/skat_model.npz")
         self.mean, self.std, self.W1, self.b1, self.W2, self.b2 = (m[k] for k in ("mean", "std", "W1", "b1", "W2", "b2"))
         self.p = np.zeros(5)
+        self.sp, self.vad = 1.0, None  # sp — вероятность «сейчас человеческая речь, а не шум» (по последнему вектору признаков)
+        if os.path.exists(f"{d}/vad_model.npz"):
+            v = np.load(f"{d}/vad_model.npz"); self.vad = tuple(v[k] for k in ("mean", "std", "w", "b"))
         self.reset()
 
     def reset(self):
+        if self.mar: self.mar.reset(); return
         self.raw = np.zeros(0, np.float32)
         self.mels = np.zeros((0, 32), np.float32)
         self.embs = np.zeros((0, 96), np.float32)
 
     def feed(self, chunk):
+        if self.mar:
+            s = self.mar.feed(chunk); self.p = np.array([1 - s, s, 0.0, 0.0, 0.0]); return s
         self.raw = np.concatenate((self.raw, chunk.astype(np.float32)))[-(STEP + 480):]
         mel = np.squeeze(self.mel.run(None, {self.mi: self.raw[None]})[0]) / 10 + 2
         self.mels = np.vstack((self.mels, mel.reshape(-1, 32)))[-120:]
         if len(self.mels) < 76: return None
         e = self.emb.run(None, {self.ei: self.mels[-76:][None, :, :, None].astype(np.float32)})[0].reshape(1, 96)
         self.embs = np.vstack((self.embs, e))[-16:]
+        if self.vad is not None:
+            m, sd, w, b = self.vad; self.sp = float(1 / (1 + np.exp(-(((e.reshape(-1) - m) / sd) @ w + b))))
         if len(self.embs) < 16: return None
         x = (self.embs.reshape(-1) - self.mean) / self.std
         h = np.maximum(x @ self.W1 + self.b1, 0)
