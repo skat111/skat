@@ -57,7 +57,7 @@ MUSIC_TOKEN=...
 ```
 и перезапустите клиент (`rc-service skat restart`). Токен Яндекс Музыки: проект `yandex-music-api` (без него играют только 30-секундные превью).
 
-Лента ZENGGE (Bluetooth): найдите её адрес (команда печатается в конце установки), впишите `LED_ADDR=` в `/etc/skat-music.env` и включите `systemctl enable --now skat-led`.
+Лента IllumiHome DMRRBA-007 (Bluetooth): найдите её адрес (команда печатается в конце установки), впишите `LED_ADDR=` в `/etc/skat-music.env` и включите `systemctl enable --now skat-led`.
 Лента монитора Skydimo (USB): воткните её в Pi, служба увидит `/dev/ttyUSB0` сама; число диодов: `SKY_LEDS=` (по умолчанию 65).
 
 ## 5. Агент на ПК (Windows, необязательно)

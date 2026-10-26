@@ -15,5 +15,5 @@ if [ ! -f /etc/skat-music.env ]; then
   echo "MUSIC_TOKEN для колонки: $TOKEN"
 fi
 systemctl daemon-reload && systemctl enable --now skat-music
-echo "Музыка запущена. Ленту включайте после того, как найдёте её: добавьте LED_ADDR в /etc/skat-music.env и: systemctl enable --now skat-led"
+echo "Музыка запущена. IllumiHome DMRRBA-007 включайте после того, как найдёте её: добавьте LED_ADDR в /etc/skat-music.env и: systemctl enable --now skat-led"
 echo "Поиск ленты по Bluetooth: /opt/skat-music/venv/bin/python -c \"import asyncio;from bleak import BleakScanner;[print(d.address,d.name) for d in asyncio.run(BleakScanner.discover(10))]\""

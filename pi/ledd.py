@@ -1,4 +1,4 @@
-"""Лента ZENGGE (LEDnetWF, Bluetooth LE) для Ската: держит одно соединение и принимает цвета по HTTP.
+"""Лента IllumiHome DMRRBA-007 по Bluetooth LE: держит одно соединение и принимает цвета по HTTP.
 Запуск на Pi: LED_ADDR=AA:BB:CC:DD:EE:FF MUSICD_TOKEN=... python ledd.py (порт LED_PORT, по умолчанию 8781; заголовок X-Token).
 POST /rgb/R/G/B  временный цвет (эмоция, бит музыки): последний выигрывает, не чаще ~12 раз в секунду
 POST /base/R/G/B постоянный цвет (голос): к нему возвращает /restore;  POST /restore  /on  /off  /gain/0..100 (яркость)
@@ -10,25 +10,19 @@ from bleak import BleakClient, BleakScanner
 E = os.environ.get
 ADDR, TOKEN, PORT = E("LED_ADDR"), E("MUSICD_TOKEN"), int(E("LED_PORT", "8781"))
 STATE_FILE = E("LED_STATE", "/var/lib/skat-led.json")
-CH = "0000ff01-0000-1000-8000-00805f9b34fb"
-seq = [0]
+CH = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 
 
-def wrap(cmd):
-    """Транспортная обёртка протокола LEDnetWF: 00 seq 80 00 00 len len+1 0B + команда + контрольная сумма."""
-    cmd = bytes(cmd); inner = cmd + bytes([sum(cmd) & 0xFF]); seq[0] = (seq[0] + 1) & 0xFF
-    return bytes([0x00, seq[0], 0x80, 0x00, 0x00, len(inner), len(inner) + 1, 0x0B]) + inner
-
-
-def rgb_cmd(r, g, b): return wrap([0x31, r, g, b, 0, 0, 0xF0, 0x0F])
-def power_cmd(on): return wrap([0x3B, 0x23 if on else 0x24, 0, 0, 0, 0, 0, 0, 0, 0x32, 0, 0])
+def rgb_cmd(r, g, b): return bytes([0x5A, 0x07, 0x01, r, g, b])
+def brightness_cmd(percent): return bytes([0x5A, 0x03, 0x01, percent, 0])
+def power_cmd(on): return bytes([0x5A, 0x01, 0x02, int(on)])
 
 
 S = {"base": [132, 132, 132], "on": True, "gain": 1.0}  # base: цвет, который был на ленте до Ската (тусклый белый)
 try: S.update(json.load(open(STATE_FILE)))
 except (OSError, ValueError): pass
-dev = {"on": None, "rgb": None}     # что сейчас на ленте
-want = {"v": None}                  # ("rgb", (r, g, b)) | ("power", bool)
+dev = {"on": None, "rgb": None, "gain": None}  # что сейчас на ленте
+want = {"v": None}                  # ("rgb", (r, g, b)) | ("power", bool) | ("gain", 0..100)
 lock = threading.Lock()
 
 
@@ -65,7 +59,8 @@ def push(item):
 def show(rgb):
     """Временный цвет: если лента выключена голосом, не трогаем."""
     if S["on"]:
-        v = tuple(min(255, int(c * S["gain"])) for c in rgb); push(("rgb", v)); SKY["tgt"] = v
+        v = tuple(min(255, int(c)) for c in rgb); push(("rgb", v))
+        SKY["tgt"] = tuple(int(c * S["gain"]) for c in v)
 
 
 async def worker():
@@ -74,7 +69,15 @@ async def worker():
             d = await BleakScanner.find_device_by_address(ADDR, 15)
             if not d: print("лента не найдена, повтор", flush=True); continue
             async with BleakClient(d, timeout=20) as c:
-                print("лента подключена", flush=True); dev["on"] = dev["rgb"] = None
+                print("лента DMRRBA-007 подключена", flush=True); dev.update(on=None, rgb=None, gain=None)
+                gain = round(S["gain"] * 100)
+                await c.write_gatt_char(CH, brightness_cmd(gain), response=False); dev["gain"] = gain
+                if S["on"]:
+                    rgb = tuple(S["base"])
+                    await c.write_gatt_char(CH, rgb_cmd(*rgb), response=False); dev["rgb"] = rgb
+                    await c.write_gatt_char(CH, power_cmd(True), response=False); dev["on"] = True
+                else:
+                    await c.write_gatt_char(CH, power_cmd(False), response=False); dev["on"] = False
                 last = 0.0
                 while c.is_connected:
                     with lock: item, want["v"] = want["v"], None
@@ -82,6 +85,8 @@ async def worker():
                     kind, val = item
                     if kind == "power":
                         if val != dev["on"]: await c.write_gatt_char(CH, power_cmd(val), response=False); dev["on"] = val; dev["rgb"] = None
+                    elif kind == "gain":
+                        if val != dev["gain"]: await c.write_gatt_char(CH, brightness_cmd(val), response=False); dev["gain"] = val
                     elif tuple(val) != dev["rgb"]:
                         await c.write_gatt_char(CH, rgb_cmd(*val), response=False); dev["rgb"] = tuple(val)  # сначала цвет, потом питание: без вспышки старого цвета
                         if dev["on"] is not True: await asyncio.sleep(0.05); await c.write_gatt_char(CH, power_cmd(True), response=False); dev["on"] = True
@@ -110,7 +115,9 @@ class H(BaseHTTPRequestHandler):
             elif p[0] == "restore": show(S["base"]) if S["on"] else (push(("power", False)), SKY.update(tgt=(0, 0, 0)))
             elif p[0] == "on": S["on"] = True; save(); show(S["base"])
             elif p[0] == "off": S["on"] = False; save(); push(("power", False)); SKY["tgt"] = (0, 0, 0)
-            elif p[0] == "gain": S["gain"] = max(0.03, min(1.0, int(p[1]) / 100)); save(); show(S["base"])
+            elif p[0] == "gain":
+                S["gain"] = max(0.03, min(1.0, int(p[1]) / 100)); save(); push(("gain", round(S["gain"] * 100)))
+                SKY["tgt"] = tuple(int(c * S["gain"]) for c in S["base"])
             else: return self.reply(404)
         except (ValueError, IndexError): return self.reply(400)
         self.reply(200)

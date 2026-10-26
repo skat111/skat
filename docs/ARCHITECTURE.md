@@ -21,7 +21,7 @@
 - Остальное: `/verify`, `/say`, `/vision` (снимок экрана + вопрос), `/img/<id>`, `/health`.
 
 **Дополнительные устройства**
-- Pi: `musicd.py` (Яндекс Музыка: поиск, «Моя волна», PCM 48 кГц по HTTP), `ledd.py` (лента ZENGGE по BLE и Skydimo по USB; цвета по HTTP).
+- Pi: `musicd.py` (Яндекс Музыка: поиск, «Моя волна», PCM 48 кГц по HTTP), `ledd.py` (лента IllumiHome DMRRBA-007 по BLE и Skydimo по USB; цвета по HTTP).
 - ПК: `pcagent.py` (Windows): `/do` (список действий), `/screenshot`, `/show` (картинка), `/audio` (звук компьютера потоком), `/sky/*`.
 
 ## Безопасность
