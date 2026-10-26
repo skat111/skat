@@ -26,7 +26,7 @@ want = {"v": None}                  # ("rgb", (r, g, b)) | ("power", bool) | ("g
 lock = threading.Lock()
 
 
-SKY = {"tgt": (0, 0, 0), "cur": [0.0, 0.0, 0.0], "n": int(E("SKY_LEDS", "65")), "ok": False, "gamma": float(E("SKY_GAMMA", "1.5"))}
+SKY = {"tgt": (0, 0, 0), "cur": [0.0, 0.0, 0.0], "n": int(E("SKY_LEDS", "65")), "ok": False}
 
 
 def sky_loop():
@@ -41,7 +41,7 @@ def sky_loop():
             SKY["ok"] = True; print("лента монитора подключена:", dev, flush=True)
             while True:
                 SKY["cur"] = [c + (t - c) * 0.55 for c, t in zip(SKY["cur"], SKY["tgt"])]
-                px = bytes(round(255 * (min(255, max(0, c)) / 255) ** SKY["gamma"]) for c in SKY["cur"])
+                px = bytes(round(255 * (min(255, max(0, c)) / 255) ** 2.2) for c in SKY["cur"])
                 ser.write(b"Ada\x00\x00" + bytes([SKY["n"]]) + px * SKY["n"]); time.sleep(0.045)
         except Exception as e:
             SKY["ok"] = False; print("лента монитора:", repr(e)[:120], flush=True); time.sleep(3)
@@ -59,7 +59,9 @@ def push(item):
 def show(rgb):
     """Временный цвет: если лента выключена голосом, не трогаем."""
     if S["on"]:
-        v = tuple(min(255, int(c)) for c in rgb); push(("rgb", v))
+        v = tuple(min(255, int(c)) for c in rgb)
+        m = max(v)  # потолочная лента всегда на полной яркости: цвет сохраняем, а «яркость» не гасим (LED_FULL=0 вернёт прежнее поведение)
+        push(("rgb", tuple(int(c * 255 / m) for c in v) if (E("LED_FULL", "1") == "1" and m > 0) else v))
         SKY["tgt"] = tuple(int(c * S["gain"]) for c in v)
 
 
